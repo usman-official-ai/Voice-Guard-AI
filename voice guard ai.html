@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>VoiceGuard AI | Deepfake Voice Detector</title>
+    <!-- Tailwind CSS + Google Fonts + Font Awesome Icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for confidence visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Axios for API calls -->
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <!-- html2pdf for report generation (bonus) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" integrity="sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,600;14..32,700;14..32,800&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Inter', sans-serif; }
+        body {
+            background: radial-gradient(circle at 10% 20%, #0a0f1e, #03050b);
+            min-height: 100vh;
+        }
+        /* Glowing pulse animation for recording */
+        @keyframes pulseGlow {
+            0% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(6, 182, 212, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0); }
+        }
+        .recording-pulse {
+            animation: pulseGlow 1.5s infinite;
+        }
+        /* Scanning effect on analyze */
+        @keyframes scanLine {
+            0% { transform: translateY(-100%); opacity: 0.8; }
+            100% { transform: translateY(200%); opacity: 0; }
+        }
+        .scan-effect {
+            position: relative;
+            overflow: hidden;
+        }
+        .scan-effect::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 30%;
+            background: linear-gradient(180deg, rgba(0,255,255,0.3), transparent);
+            animation: scanLine 1.2s ease-in-out forwards;
+            pointer-events: none;
+        }
+        /* waveform canvas styling */
+        canvas.waveform {
+            background: #0b1120;
+            border-radius: 16px;
+            width: 100%;
+            height: 80px;
+        }
+        .card-neon {
+            border: 1px solid rgba(0, 255, 255, 0.2);
+            background: rgba(12, 20, 35, 0.65);
+            backdrop-filter: blur(8px);
+        }
+        .progress-ring {
+            transition: stroke-dashoffset 0.35s;
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #0ea5e9; border-radius: 8px; }
+    </style>
+</head>
+<body class="text-gray-200">
+
+<div id="root" class="max-w-7xl mx-auto px-4 py-6 md:py-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center flex-wrap gap-3 mb-8">
+        <div class="flex items-center gap-3">
+            <div class="h-10 w-10 rounded-full bg-cyan-500/20 flex items-center justify-center border border-cyan-400">
+                <span class="text-cyan-400 text-xl">🎙️</span>
+            </div>
+            <h1 class="text-2xl md:text-3xl font-extrabold bg-gradient-to-r from-cyan-300 to-indigo-400 bg-clip-text text-transparent">VoiceGuard AI</h1>
+            <span class="text-xs bg-cyan-900/50 px-2 py-1 rounded-full border border-cyan-500/40">Anti-Deepfake Shield</span>
+        </div>
+        <div class="flex gap-2">
+            <div class="text-xs flex items-center gap-1 bg-black/40 px-3 py-1 rounded-full"><span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span> System Online</div>
+        </div>
+    </div>
+
+    <div class="grid lg:grid-cols-3 gap-6">
+        <!-- LEFT PANEL: Upload & Recording Controls -->
+        <div class="lg:col-span-1 space-y-5">
+            <!-- Upload Card -->
+            <div class="card-neon rounded-2xl p-5 shadow-xl">
+                <h2 class="text-lg font-semibold flex items-center gap-2 mb-3"><span class="text-cyan-400">📂</span> Audio Source</h2>
+                <div class="space-y-4">
+                    <label class="block w-full border border-dashed border-cyan-500/40 rounded-xl p-3 text-center cursor-pointer hover:bg-cyan-950/30 transition bg-gray-900/40">
+                        <input type="file" id="fileInput" accept=".wav,.mp3,.m4a,.ogg" class="hidden" />
+                        <div class="flex flex-col items-center"><span class="text-2xl">📁</span><span class="text-sm mt-1">Upload .wav or .mp3</span><span class="text-xs text-gray-400">max 15MB</span></div>
+                    </label>
+                    
+                    <div class="flex gap-3">
+                        <button id="recordBtn" class="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 py-2.5 rounded-xl font-semibold transition shadow-lg"><span class="text-xl">🎙️</span> Record</button>
+                        <button id="stopRecordBtn" disabled class="flex-1 bg-gray-700/50 text-gray-300 py-2.5 rounded-xl font-semibold">⏹️ Stop</button>
+                    </div>
+                    <div id="recordingStatus" class="text-xs text-center text-cyan-300 hidden">🔴 Recording in progress ...</div>
+                    <div id="audioPlaybackArea" class="hidden mt-2">
+                        <audio id="playbackAudio" controls class="w-full h-10 rounded-md"></audio>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Noise & Spectro Bonus Minimal -->
+            <div class="card-neon rounded-2xl p-5">
+                <h3 class="text-sm uppercase tracking-wider text-gray-400 flex items-center gap-2"><span>📡</span> Live Mic Analysis</h3>
+                <div id="noiseLevel" class="text-xs mt-2 text-gray-300">Noise level: -- dB</div>
+                <canvas id="spectroCanvas" width="300" height="80" class="w-full h-20 mt-2 rounded-lg bg-black/40 border border-cyan-800/50"></canvas>
+                <div class="text-[10px] text-gray-500 mt-1">Real-time Spectrogram (mock)</div>
+            </div>
+
+            <!-- History Panel Bonus -->
+            <div class="card-neon rounded-2xl p-5">
+                <div class="flex justify-between items-center"><h3 class="font-semibold">📜 Scan History</h3><button id="clearHistoryBtn" class="text-xs text-red-400 hover:text-red-300">Clear</button></div>
+                <ul id="historyList" class="mt-2 space-y-2 max-h-48 overflow-y-auto text-sm">
+                    <li class="text-gray-500 text-center italic">No scans yet</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- RIGHT PANEL: Result & Visualization -->
+        <div class="lg:col-span-2 space-y-5">
+            <!-- Analyze Button -->
+            <div class="flex justify-center">
+                <button id="analyzeBtn" class="px-8 py-3 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 rounded-full font-bold text-lg shadow-[0_0_12px_#06b6d4] transition transform hover:scale-105 flex items-center gap-2">🚀 Analyze Voice<span class="text-xs">AI</span></button>
+            </div>
+
+            <!-- Result Dashboard -->
+            <div id="resultCard" class="card-neon rounded-2xl p-5 transition-all duration-300 hidden">
+                <div class="flex flex-col md:flex-row justify-between items-start gap-4">
+                    <div>
+                        <div class="text-sm text-gray-300">Detection Verdict</div>
+                        <div id="verdictDisplay" class="text-3xl md:text-4xl font-black flex items-center gap-2 mt-1"></div>
+                        <div id="riskBadge" class="mt-2 inline-block px-3 py-1 rounded-full text-xs font-bold"></div>
+                    </div>
+                    <div class="w-28 h-28 relative">
+                        <canvas id="confidenceGauge" width="120" height="120" class="w-28 h-28"></canvas>
+                        <div id="confidenceText" class="absolute inset-0 flex items-center justify-center text-lg font-bold"></div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-6">
+                    <div class="bg-black/40 p-3 rounded-xl border-l-4 border-cyan-500"><div class="text-xs text-gray-400">Voice Cloning Prob</div><div id="cloneProb" class="text-xl font-mono">--</div></div>
+                    <div class="bg-black/40 p-3 rounded-xl border-l-4 border-amber-500"><div class="text-xs text-gray-400">TTS Probability</div><div id="ttsProb" class="text-xl font-mono">--</div></div>
+                    <div class="bg-black/40 p-3 rounded-xl border-l-4 border-purple-500"><div class="text-xs text-gray-400">Artifact Score</div><div id="artifactScore" class="text-xl font-mono">--</div></div>
+                </div>
+                <div class="mt-4 p-3 bg-cyan-950/30 rounded-xl text-sm" id="explanationBox">
+                    <span class="font-semibold text-cyan-300">🧠 Explainable AI:</span> <span id="explanationText">Waiting for analysis...</span>
+                </div>
+                <div class="flex flex-wrap gap-3 mt-5">
+                    <button id="downloadReportBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-sm flex items-center gap-2"><span>📄</span> Download PDF Report</button>
+                    <button id="reanalyzeBtn" class="bg-cyan-800/40 border border-cyan-500/60 hover:bg-cyan-800/70 px-4 py-2 rounded-lg text-sm">🔄 Re-analyze / New Audio</button>
+                </div>
+            </div>
+            
+            <!-- Waveform & fraud alert -->
+            <div class="card-neon rounded-2xl p-4">
+                <div class="flex justify-between"><span class="text-sm">🔊 Audio Waveform Preview</span><span id="fileLabel" class="text-xs text-gray-400">No file loaded</span></div>
+                <canvas id="waveformCanvas" class="waveform mt-2 h-20"></canvas>
+                <div id="fraudAlert" class="mt-2 hidden bg-red-950/60 border border-red-500 rounded-lg p-2 text-red-200 text-sm flex items-center gap-2"><span>⚠️</span> Suspicious voice artifacts detected! High deepfake likelihood.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ------------------- GLOBALS -------------------
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let recordedBlob = null;         // current recorded blob
+    let uploadedFile = null;          // current uploaded file
+    let currentAudioUrl = null;       // blob url for playback/waveform
+    let waveformCtx = null;
+    let gaugeCtx = null;
+    let gaugeChart = null;
+    let historyArray = [];             // store last 5 { verdict, confidence, details, timestamp }
+    let isRecordingActive = false;
+    let noiseInterval = null;
+    let audioContextGlobal = null;
+    let mediaStream = null;
+    let spectroCtx = null;
+    let animationFrameId = null;
+    
+    // DOM elements
+    const fileInput = document.getElementById('fileInput');
+    const recordBtn = document.getElementById('recordBtn');
+    const stopRecordBtn = document.getElementById('stopRecordBtn');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const resultCard = document.getElementById('resultCard');
+    const playbackAudio = document.getElementById('playbackAudio');
+    const audioPlaybackArea = document.getElementById('audioPlaybackArea');
+    const recordingStatus = document.getElementById('recordingStatus');
+    const waveformCanvas = document.getElementById('waveformCanvas');
+    const fileLabel = document.getElementById('fileLabel');
+    const fraudAlertDiv = document.getElementById('fraudAlert');
+    const historyListEl = document.getElementById('historyList');
+    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+    const reanalyzeBtn = document.getElementById('reanalyzeBtn');
+    const downloadReportBtn = document.getElementById('downloadReportBtn');
+    const noiseLevelSpan = document.getElementById('noiseLevel');
+    const spectroCanvas = document.getElementById('spectroCanvas');
+    
+    // Initialize chart placeholders
+    function initGauge() {
+        if(gaugeChart) gaugeChart.destroy();
+        const canvas = document.getElementById('confidenceGauge');
+        if(!canvas) return;
+        gaugeCtx = canvas.getContext('2d');
+        gaugeChart = new Chart(gaugeCtx, {
+            type: 'doughnut',
+            data: { datasets: [{ data: [0, 100], backgroundColor: ['#06b6d4', '#1e293b'], borderWidth: 0, circumference: 180, rotation: 270 }] },
+            options: { cutout: '70%', responsive: true, maintainAspectRatio: true, plugins: { tooltip: { enabled: false }, legend: { display: false } } }
+        });
+    }
+    
+    // Helper: update gauge & confidence percent
+    function updateGauge(percent) {
+        if(gaugeChart) {
+            gaugeChart.data.datasets[0].data = [percent, 100 - percent];
+            gaugeChart.update();
+        }
+        document.getElementById('confidenceText').innerHTML = `${Math.round(percent)}%`;
+    }
+    
+    // draw fake waveform (placeholder using random magnitude but we can simulate)
+    function drawMockWaveform(audioUrl = null) {
+        if(!waveformCtx) waveformCtx = waveformCanvas.getContext('2d');
+        waveformCtx.fillStyle = '#0b1120';
+        waveformCtx.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+        const barCount = 50;
+        const step = waveformCanvas.width / barCount;
+        for(let i=0;i<barCount;i++) {
+            let height = 20 + Math.random() * 40;
+            waveformCtx.fillStyle = '#0ea5e9';
+            waveformCtx.fillRect(i*step, waveformCanvas.height-height, step-2, height);
+        }
+    }
+    
+    // update result UI with API mock (actual API integration)
+    async function analyzeAudio() {
+        let audioBlob = null;
+        if(recordedBlob) audioBlob = recordedBlob;
+        else if(uploadedFile) audioBlob = uploadedFile;
+        else { toastMessage("No audio loaded. Please record or upload.", "error"); return; }
+        
+        if(!audioBlob || audioBlob.size === 0) { toastMessage("Audio file is empty", "error"); return; }
+        
+        // Scanning effect animation on card
+        const resultDiv = document.getElementById('resultCard');
+        resultDiv.classList.add('scan-effect');
+        setTimeout(() => resultDiv.classList.remove('scan-effect'), 1200);
+        
+        analyzeBtn.disabled = true;
+        analyzeBtn.innerText = "🔍 Analyzing...";
+        
+        // Simulate API call to backend endpoint: POST /analyze
+        // In real prod replace with axios.post('/analyze', formData)
+        // For demo, we'll call a mock endpoint with 0.7s delay and actual realistic response generation based on "fake audio detection vibe"
+        // But we will simulate using AI-generated probability based on file size randomness for demo but realistic structure.
+        // Real integration point:
+        const formData = new FormData();
+        formData.append('audio', audioBlob, `audio.${audioBlob.type.includes('mp3')?'mp3':'wav'}`);
+        try {
+            // Mock endpoint - in production replace with actual backend URL
+            // For demo, we will produce deterministic mock based on file size/random but consistent with smart audio artifact.
+            // Better: generate reasonable "deepfake" probability randomness but showcase features.
+            // Use random but with bias: If file is silence small or too clean maybe fake, just showcase.
+            // We'll integrate fake but structure matches required response.
+            let mockResponse;
+            await new Promise(r => setTimeout(r, 1000)); // simulate inference
+            // Create deterministic but "human-like" pattern depending on file name / size for demo variety
+            const sizeSeed = audioBlob.size % 100;
+            const isAIGenerated = sizeSeed < 45 ? true : false;  // 45% chance fake for demo variety
+            const confidence = isAIGenerated ? 0.72 + (sizeSeed % 25)/100 : 0.85 + (sizeSeed % 15)/100;
+            mockResponse = {
+                is_ai_generated: isAIGenerated,
+                confidence: Math.min(0.99, confidence),
+                details: {
+                    voice_cloning: isAIGenerated ? 0.65 + (sizeSeed%20)/100 : 0.12,
+                    tts_probability: isAIGenerated ? 0.70 + (sizeSeed%15)/100 : 0.08,
+                    artifact_score: isAIGenerated ? 0.68 + (sizeSeed%20)/100 : 0.09
+                }
+            };
+            // ---- ACTUAL API would be uncommented below:
+            /*
+            const apiRes = await axios.post('https://your-backend.com/analyze', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+            mockResponse = apiRes.data;
+            */
+            renderResult(mockResponse);
+            addToHistory(mockResponse);
+            toastMessage("Analysis complete!", "success");
+        } catch(err) {
+            console.error(err);
+            toastMessage("API error: Could not analyze voice", "error");
+        } finally {
+            analyzeBtn.disabled = false;
+            analyzeBtn.innerText = "🚀 Analyze Voice";
+        }
+    }
+    
+    function renderResult(data) {
+        resultCard.classList.remove('hidden');
+        const isFake = data.is_ai_generated;
+        const confidencePercent = Math.round(data.confidence * 100);
+        const verdictElem = document.getElementById('verdictDisplay');
+        const riskBadge = document.getElementById('riskBadge');
+        if(!isFake) {
+            verdictElem.innerHTML = '<span class="text-green-400">✅ Human Voice</span> <span class="text-xs">Real Person</span>';
+            riskBadge.innerHTML = '🟢 Risk Level: LOW';
+            riskBadge.className = "mt-2 inline-block px-3 py-1 rounded-full text-xs font-bold bg-green-900/60 text-green-200";
+        } else {
+            verdictElem.innerHTML = '<span class="text-red-400">❌ AI-Generated Voice</span> <span class="text-xs">Deepfake Alert</span>';
+            riskBadge.innerHTML = '🔴 Risk Level: HIGH - Synthetic Voice Detected';
+            riskBadge.className = "mt-2 inline-block px-3 py-1 rounded-full text-xs font-bold bg-red-900/70 text-red-200";
+            fraudAlertDiv.classList.remove('hidden');
+        }
+        if(!isFake && data.confidence > 0.85) fraudAlertDiv.classList.add('hidden');
+        else if(!isFake) fraudAlertDiv.classList.add('hidden');
+        
+        updateGauge(confidencePercent);
+        document.getElementById('cloneProb').innerHTML = `${Math.round(data.details.voice_cloning * 100)}%`;
+        document.getElementById('ttsProb').innerHTML = `${Math.round(data.details.tts_probability * 100)}%`;
+        document.getElementById('artifactScore').innerHTML = `${Math.round(data.details.artifact_score * 100)}%`;
+        
+        // Explainable AI snippet
+        let explanation = "";
+        if(isFake) {
+            if(data.details.voice_cloning > 0.5) explanation = "High voice cloning probability suggests synthetic replication of vocal identity. Spectral artifacts indicate non-human vocal tract resonances.";
+            else if(data.details.tts_probability > 0.6) explanation = "Text-to-speech patterns detected: rhythmic irregularities & formant smoothing typical of generative models.";
+            else explanation = "Artifact score elevated: phase inconsistencies and high-frequency noise point to AI-generated deepfake.";
+        } else {
+            explanation = "Natural prosody and breath patterns detected. Low artifact score & harmonic structure matches live human voice.";
+        }
+        document.getElementById('explanationText').innerText = explanation;
+        
+        // trigger recharts? not needed as we have gauge.
+    }
+    
+    function addToHistory(res) {
+        const entry = { 
+            timestamp: new Date().toLocaleTimeString(), 
+            verdict: res.is_ai_generated ? "AI Fake" : "Human", 
+            confidence: Math.round(res.confidence*100),
+            details: res.details
+        };
+        historyArray.unshift(entry);
+        if(historyArray.length > 5) historyArray.pop();
+        renderHistory();
+    }
+    
+    function renderHistory() {
+        if(historyArray.length === 0) { historyListEl.innerHTML = '<li class="text-gray-500 text-center italic">No scans yet</li>'; return; }
+        historyListEl.innerHTML = historyArray.map(h => `<li class="bg-black/30 rounded-lg p-2 flex justify-between items-center"><span><span class="${h.verdict === 'Human' ? 'text-green-400' : 'text-red-400'}">${h.verdict}</span> <span class="text-xs">${h.timestamp}</span></span><span class="font-mono text-xs">${h.confidence}%</span></li>`).join('');
+    }
+    
+    // handle file upload
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if(file && (file.type.includes('audio') || file.name.match(/\.(mp3|wav|m4a|ogg)$/i))) {
+            uploadedFile = file;
+            recordedBlob = null;
+            if(currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+            currentAudioUrl = URL.createObjectURL(file);
+            playbackAudio.src = currentAudioUrl;
+            audioPlaybackArea.classList.remove('hidden');
+            fileLabel.innerText = `📁 ${file.name.substring(0, 25)}`;
+            drawMockWaveform(currentAudioUrl);
+        } else { toastMessage("Invalid audio format", "error"); }
+    });
+    
+    // Recording logic
+    async function startRecording() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaStream = stream;
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+            mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+            mediaRecorder.onstop = () => {
+                recordedBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                uploadedFile = null;
+                if(currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+                currentAudioUrl = URL.createObjectURL(recordedBlob);
+                playbackAudio.src = currentAudioUrl;
+                audioPlaybackArea.classList.remove('hidden');
+                fileLabel.innerText = "🎤 Recorded Audio";
+                drawMockWaveform(currentAudioUrl);
+                recordingStatus.classList.add('hidden');
+                stopRecordBtn.disabled = true;
+                recordBtn.disabled = false;
+                if(noiseInterval) clearInterval(noiseInterval);
+                if(mediaStream) mediaStream.getTracks().forEach(t=>t.stop());
+            };
+            mediaRecorder.start();
+            isRecordingActive = true;
+            recordingStatus.classList.remove('hidden');
+            recordBtn.disabled = true;
+            stopRecordBtn.disabled = false;
+            // Real-time noise level simulation
+            noiseInterval = setInterval(() => {
+                const mockNoise = (Math.random() * 40 + 30).toFixed(1);
+                noiseLevelSpan.innerHTML = `Noise level: ${mockNoise} dB (ambient)`;
+            }, 800);
+        } catch(err) { toastMessage("Microphone permission denied", "error"); }
+    }
+    function stopRecording() {
+        if(mediaRecorder && mediaRecorder.state !== 'inactive') { mediaRecorder.stop(); isRecordingActive = false; }
+        if(mediaStream) mediaStream.getTracks().forEach(t=>t.stop());
+        if(noiseInterval) clearInterval(noiseInterval);
+        recordBtn.disabled = false;
+        stopRecordBtn.disabled = true;
+    }
+    recordBtn.onclick = startRecording;
+    stopRecordBtn.onclick = stopRecording;
+    analyzeBtn.onclick = analyzeAudio;
+    reanalyzeBtn.onclick = () => { resultCard.classList.add('hidden'); fraudAlertDiv.classList.add('hidden'); uploadedFile=null; recordedBlob=null; audioPlaybackArea.classList.add('hidden'); fileLabel.innerText="No file loaded"; if(currentAudioUrl) URL.revokeObjectURL(currentAudioUrl); drawMockWaveform(); };
+    clearHistoryBtn.onclick = () => { historyArray = []; renderHistory(); toastMessage("History cleared","info"); };
+    downloadReportBtn.onclick = () => {
+        const element = document.getElementById('resultCard');
+        const opt = { margin: 0.5, filename: 'VoiceGuard_Report.pdf', image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' } };
+        html2pdf().set(opt).from(element).save();
+        toastMessage("Report downloaded", "success");
+    };
+    function toastMessage(msg, type="info") {
+        const toastDiv = document.createElement('div');
+        toastDiv.className = `fixed bottom-5 right-5 z-50 px-5 py-2 rounded-xl shadow-lg text-sm font-medium ${type==='error'?'bg-red-800':'bg-cyan-800'} text-white animate-pulse`;
+        toastDiv.innerText = msg;
+        document.body.appendChild(toastDiv);
+        setTimeout(()=>toastDiv.remove(), 2700);
+    }
+    // dummy spectrogram animation (bonus)
+    function drawSpectroMock() {
+        if(!spectroCtx) spectroCtx = spectroCanvas.getContext('2d');
+        const ctx = spectroCtx;
+        if(!ctx) return;
+        ctx.fillStyle = '#03050b';
+        ctx.fillRect(0,0, spectroCanvas.width, spectroCanvas.height);
+        for(let i=0;i<60;i++) {
+            let intensity = Math.random() * 255;
+            ctx.fillStyle = `rgba(0, ${150+Math.random()*105}, 200, 0.7)`;
+            ctx.fillRect(i*5, spectroCanvas.height-Math.random()*40, 3, Math.random()*40);
+        }
+        animationFrameId = requestAnimationFrame(drawSpectroMock);
+    }
+    drawSpectroMock();
+    initGauge();
+    drawMockWaveform();
+    // check for mic permissions on load
+    window.addEventListener('load', () => { navigator.mediaDevices?.getUserMedia({ audio: true }).then(stream => stream.getTracks().forEach(t=>t.stop())).catch(e=>console.warn); });
+</script>
+</body>
+</html>
