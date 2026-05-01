@@ -1,4 +1,5 @@
 ## 🎙️ Voice-Guard-AI
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/2e35cb6d-3171-4a13-9727-1b5e9b86a6e0" />
 
 
 
