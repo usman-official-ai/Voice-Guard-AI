@@ -1,0 +1,9 @@
+numpy
+librosa
+scikit-learn
+joblib
+matplotlib
+seaborn
+gradio
+plotly
+tqdm
